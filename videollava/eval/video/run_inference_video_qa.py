@@ -5,6 +5,7 @@ import json
 
 import torch
 import transformers
+from transformers import set_seed
 from tqdm import tqdm
 from videollava.conversation import conv_templates, SeparatorStyle
 from videollava.constants import DEFAULT_IM_START_TOKEN, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_END_TOKEN, IMAGE_TOKEN_INDEX, DEFAULT_VID_START_TOKEN, DEFAULT_VID_END_TOKEN
@@ -12,6 +13,10 @@ from videollava.mm_utils import get_model_name_from_path, tokenizer_image_token,
 from videollava.model.builder import load_pretrained_model
 from videollava.model.language_model.llava_llama import LlavaLlamaForCausalLM
 from videollava.train.train import smart_tokenizer_and_embedding_resize
+
+from videoprocess.VCD_add_noise import add_diffusion_noise
+from videoprocess.VCD_sample import evolve_vcd_sampling
+evolve_vcd_sampling()
 
 
 def split_list(lst, n):
@@ -44,7 +49,18 @@ def parse_args():
     parser.add_argument('--model_base', help='', default=None, type=str, required=False)
     parser.add_argument("--model_max_length", type=int, required=False, default=2048)
 
+    parser.add_argument("--top_p", type=float, default=1)
+    parser.add_argument("--top_k", type=int, default=None)
+
+    parser.add_argument("--noise_step", type=int, default=500)
+    parser.add_argument("--use_cd", action='store_true', default=True)
+    parser.add_argument("--cd_alpha", type=float, default=1)
+    parser.add_argument("--cd_beta", type=float, default=0.1)
+    parser.add_argument("--seed", type=int, default=42)
+
     return parser.parse_args()
+    # set_seed(args.seed)
+    # run_inference(args)
 
 def get_model_output(model, video_processor, tokenizer, video, qs, args):
     if model.config.mm_use_im_start_end:
@@ -64,6 +80,13 @@ def get_model_output(model, video_processor, tokenizer, video, qs, args):
     video_tensor = video_processor.preprocess(video, return_tensors='pt')['pixel_values'][0].half().to(args.device)
     # print(video_tensor.shape)
     input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).to(args.device)
+    # print(f'video_tensor:{video_tensor}')
+    if args.use_cd:
+            print(f'begining cd function...')
+            video_tensor_cd = add_diffusion_noise(video_tensor, args.noise_step)
+            # print(f'tensor_cd:{video_tensor_cd}')
+    else:
+            video_tensor_cd = None   
 
     stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
     keywords = [stop_str]
@@ -73,8 +96,13 @@ def get_model_output(model, video_processor, tokenizer, video, qs, args):
         output_ids = model.generate(
             input_ids,
             images=[video_tensor],
+            images_cd=(video_tensor_cd.unsqueeze(0).to(args.device) if video_tensor_cd is not None else None),
+            cd_alpha = args.cd_alpha,
+            cd_beta = args.cd_beta,
+            top_p=args.top_p,
+            top_k=args.top_k,
             do_sample=True,
-            temperature=0.0,
+            temperature=1.0,
             max_new_tokens=1024,
             use_cache=True,
             stopping_criteria=[stopping_criteria])
@@ -113,7 +141,7 @@ def run_inference(args):
     gt_questions = json.load(open(args.gt_file_question, "r"))
     gt_questions = get_chunk(gt_questions, args.num_chunks, args.chunk_idx)
     gt_answers = json.load(open(args.gt_file_answers, "r"))
-    # gt_answers = get_chunk(gt_answers, args.num_chunks, args.chunk_idx)
+    gt_answers = get_chunk(gt_answers, args.num_chunks, args.chunk_idx)
 
     answers_file = os.path.join(args.output_dir, f"{args.output_name}.json")
     os.makedirs(args.output_dir, exist_ok=True)
@@ -162,4 +190,5 @@ def run_inference(args):
 
 if __name__ == "__main__":
     args = parse_args()
+    set_seed(args.seed)
     run_inference(args)
