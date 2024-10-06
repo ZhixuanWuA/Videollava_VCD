@@ -50,12 +50,12 @@ def parse_args():
     parser.add_argument("--model_max_length", type=int, required=False, default=2048)
 
     parser.add_argument("--top_p", type=float, default=1)
-    parser.add_argument("--top_k", type=int, default=None)
+    parser.add_argument("--top_k", type=int, default=50)
 
     parser.add_argument("--noise_step", type=int, default=500)
     parser.add_argument("--use_cd", action='store_true', default=True)
     parser.add_argument("--cd_alpha", type=float, default=1)
-    parser.add_argument("--cd_beta", type=float, default=0.1)
+    parser.add_argument("--cd_beta", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=42)
 
     return parser.parse_args()
@@ -102,7 +102,7 @@ def get_model_output(model, video_processor, tokenizer, video, qs, args):
             top_p=args.top_p,
             top_k=args.top_k,
             do_sample=True,
-            temperature=1.0,
+            temperature=0.5,
             max_new_tokens=1024,
             use_cache=True,
             stopping_criteria=[stopping_criteria])
