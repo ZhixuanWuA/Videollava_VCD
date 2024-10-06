@@ -115,6 +115,7 @@ def sample(
             continue  # don't waste resources running the code we don't need
 
         next_token_logits = outputs.logits[:, -1, :]
+        # print("next_token_logits Min:", next_token_logits.min().item(), "Max:", next_token_logits.max().item())
         
 
         ## For contrastive decoding initial
@@ -137,6 +138,7 @@ def sample(
                 output_hidden_states=output_hidden_states_wo_img,
             )
             next_token_logits_cd = outputs_cd.logits[:, -1, :]
+            # print("next_token_logits_cd Min:", next_token_logits_cd.min().item(), "Max:", next_token_logits_cd.max().item())
             
             ## cd_comments: pre-process logits from contrastive inputs
             cd_alpha = model_kwargs.get("cd_alpha") if model_kwargs.get("cd_alpha") is not None else 0.5
@@ -147,10 +149,14 @@ def sample(
             # cutoff = cd_beta * probs.max(dim=-1, keepdim=True).values
 
             # version 2 set cutoff for Adaptive Plausibility Constraints
-            cutoff = torch.log(torch.tensor(cd_beta)) + next_token_logits.max(dim=-1, keepdim=True).values
+            # cutoff = torch.log(torch.tensor(cd_beta)) + next_token_logits.max(dim=-1, keepdim=True).values
+            cutoff = torch.log(torch.tensor(cd_beta)) + next_token_logits.mean(dim=-1, keepdim=True)
+            # print("cutoff Min:", cutoff.min().item(), "Max:", cutoff.max().item())
             
             diffs = (1+cd_alpha)*next_token_logits - cd_alpha*next_token_logits_cd
+            # print("diffs Min:", diffs.min().item(), "Max:", diffs.max().item())
             cd_logits = diffs.masked_fill(next_token_logits < cutoff, -float("inf"))
+            # print("cd_logits Min:", cd_logits.min().item(), "Max:", cd_logits.max().item())
 
             ## cd_comments: apply temperature warping and top-k filtering in contrastive decoding
             cd_logits = logits_processor(input_ids, cd_logits)
@@ -159,6 +165,8 @@ def sample(
             next_token_scores = cd_logits
             cd_probs = nn.functional.softmax(cd_logits, dim=-1)
             next_tokens = torch.multinomial(cd_probs, num_samples=1).squeeze(1)
+            # print(f'next_tokens:{next_tokens},{len(next_tokens)}')
+
         else:
             next_token_scores = logits_processor(input_ids, next_token_logits)
             next_token_scores = logits_warper(input_ids, next_token_scores)
@@ -194,6 +202,7 @@ def sample(
 
         # update generated ids, model inputs, and length for next step
         input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+
         if streamer is not None:
             streamer.put(next_tokens.cpu())
         model_kwargs = self._update_model_kwargs_for_generation(
